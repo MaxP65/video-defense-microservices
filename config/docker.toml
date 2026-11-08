@@ -1,0 +1,40 @@
+[services]
+storage = "http://storage:8000"
+collector = "http://collector:8000"
+ml = "http://ml:8000"
+master = "http://master:8000"
+
+[ports]
+storage = 8762
+collector = 8763
+ml = 8764
+master = 8761
+visualization = 8760
+
+[storage]
+root = "data/storage"
+max_file_mb = 30
+
+[collector]
+source = "data/source"
+
+[ml]
+classes = ["ApplyEyeMakeup", "BabyCrawling", "BasketballDunk"]
+frames = 8
+size = 48
+epochs = 40
+batch_size = 6
+learning_rate = 0.001
+epsilon = 0.03137254901960784
+seed = 42
+device = "auto"
+threads = 2
+min_classifier_accuracy = 0.5
+min_mse_improvement = 0.01
+
+[dataset]
+url = "https://huggingface.co/datasets/sayakpaul/ucf101-subset/resolve/main/UCF101_subset.tar.gz"
+sha256 = "e9fcc76af48d320be88c5265f2e0576ecd615956976f6ce4742fdf2b042b71eb"
+train_per_class = 12
+val_per_class = 6
+test_per_class = 6

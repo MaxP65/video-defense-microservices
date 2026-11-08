@@ -1,0 +1,69 @@
+x-service: &service
+  restart: unless-stopped
+  environment:
+    VCR_CONFIG: config/docker.toml
+  volumes:
+    - ./config:/app/config:ro
+    - ./logs:/app/logs
+  healthcheck:
+    test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+    interval: 10s
+    timeout: 3s
+    retries: 6
+    start_period: 20s
+
+services:
+  storage:
+    <<: *service
+    build:
+      context: .
+      dockerfile: storage/Dockerfile
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - storage:/app/data/storage
+  collector:
+    <<: *service
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./data/source:/app/data/source:ro
+    depends_on:
+      storage:
+        condition: service_healthy
+  ml:
+    <<: *service
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
+    depends_on:
+      storage:
+        condition: service_healthy
+  master:
+    <<: *service
+    build:
+      context: .
+      dockerfile: master/Dockerfile
+    ports:
+      - "127.0.0.1:${API_PORT}:8000"
+    depends_on:
+      collector:
+        condition: service_healthy
+      ml:
+        condition: service_healthy
+  visualization:
+    <<: *service
+    build:
+      context: .
+      dockerfile: visualization/Dockerfile
+    ports:
+      - "127.0.0.1:${WEB_PORT}:8000"
+    depends_on:
+      master:
+        condition: service_healthy
+
+volumes:
+  storage:

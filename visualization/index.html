@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VCR Lab</title>
+<style>
+body{font:16px system-ui;background:#f4f6f8;color:#172536;max-width:1050px;margin:36px auto;padding:0 20px}h1{margin-bottom:5px}h2{font-size:20px}section{background:white;padding:22px;border:1px solid #dce2ea;border-radius:12px;margin:18px 0}button,select,input{font:inherit;padding:9px;margin:5px 8px 5px 0;border:1px solid #bbc8d5;border-radius:6px}button{background:#143e62;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:wait}table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:9px;border-bottom:1px solid #e4e9ef}small,.muted{color:#596979}#message{white-space:pre-wrap;color:#8a330c}#cards{display:flex;gap:16px;flex-wrap:wrap}.card{flex:1;min-width:190px}.card img{width:100%;image-rendering:auto;border-radius:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;padding:12px;max-height:320px;overflow:auto}label{display:inline-block}#status{font-size:14px}details{margin-top:12px}
+</style>
+<h1>VCR Lab</h1>
+<div class="muted">Классификация действий · FGSM · очистка видео</div>
+<p id="status">Проверка сервисов…</p>
+<p id="message" role="status"></p>
+<section>
+<h2>1. Данные</h2>
+<p>Три действия UCF101. Разделение train / val / test выполнено по группам исходных видео.</p>
+<button id="collect">Загрузить подготовленный набор</button><span id="counts"></span>
+</section>
+<section>
+<h2>2. Обучение</h2>
+<label>Эпохи <input id="epochs" type="number" min="1" max="200" value="40" style="width:65px"></label>
+<button id="trainClassifier">Обучить классификатор</button>
+<button id="trainPurifier">Обучить очиститель</button>
+<p><small>Сначала обучите классификатор. Каждое обучение создаёт новую модель. Метрики и решение о допуске доступны в истории.</small></p>
+<div id="models"></div>
+</section>
+<section>
+<h2>3. Атака и очистка</h2>
+<div><label>Видео <select id="video"></select></label></div>
+<div><label>Классификатор <select id="classifier"></select></label><label>Очиститель <select id="purifier"></select></label></div>
+<label>ε / 255 <input id="epsilon" type="number" min="0" max="25" value="8" style="width:65px"></label>
+<label><input id="adaptive" type="checkbox"> Атака через очиститель</label>
+<button id="run">Сравнить</button>
+<p class="muted">До прохождения диагностики доступны только технические примеры на validation. Успех атаки и восстановления не гарантирован.</p>
+<div id="result"></div><div id="cards"></div>
+</section>
+<section><h2>4. История</h2><button id="refresh">Обновить</button><div id="history"></div></section>
+<script>
+const $=id=>document.getElementById(id);
+let models=[],videos=[],animation;
+async function api(path,body){const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return data}
+function text(tag,value){const e=document.createElement(tag);e.textContent=value;return e}
+function options(id,items,label){const s=$(id),selected=s.value;s.replaceChildren();for(const v of items){const o=text('option',label(v));o.value=v.id;s.append(o)}if(items.some(v=>v.id===selected))s.value=selected}
+async function refresh(){
+ const [status,vs,ms,runs]=await Promise.all([api('status'),api('videos'),api('models'),api('runs')]);models=ms;videos=vs;
+ $('status').textContent=Object.entries(status).map(([k,v])=>k+': '+v.status).join(' · ');
+ $('counts').textContent=['train','val','test'].map(s=>s+': '+vs.filter(v=>v.split===s).length).join(' · ');
+ options('video',[...vs].sort((a,b)=>(a.split==='val'?-1:1)-(b.split==='val'?-1:1)),v=>v.class+' / '+v.split+' / '+v.path);
+ for(const kind of ['classifier','purifier'])options(kind,ms.filter(v=>v.kind===kind&&v.status==='trained'),v=>v.id.slice(0,8)+' / '+(v.diagnostics?.decision||v.status));
+ $('models').replaceChildren(...ms.map(m=>text('p',m.kind+' '+m.id.slice(0,8)+' — '+m.status+(m.diagnostics?' / диагностика: '+m.diagnostics.decision:''))));
+ $('history').replaceChildren();for(const r of [...runs].reverse()){const d=document.createElement('details');d.append(text('summary',(r.type==='training'?'Обучение':'Эксперимент')+' '+r.id.slice(0,8)+' — '+r.status+(r.epoch?' / эпоха '+r.epoch:'')));d.append(text('pre',JSON.stringify(r,null,2)));$('history').append(d)}
+}
+async function training(kind){const classifier_id=$('classifier').value;if(kind==='purifier'&&!classifier_id)throw Error('Сначала обучите классификатор');const m=await api('models',{kind});const r=await api('models/'+m.id+'/train',{epochs:Number($('epochs').value),classifier_id:classifier_id||null});$('message').textContent='Обучение запущено: '+r.id;await refresh()}
+async function experiment(){
+ const r=await api('experiments',{video_id:$('video').value,classifier_id:$('classifier').value,purifier_id:$('purifier').value,epsilon:Number($('epsilon').value)/255,adaptive:$('adaptive').checked});
+ $('result').replaceChildren(text('p','Правильный класс: '+r.true_class+' · '+r.protocol),text('p','Атака успешна: '+(r.attack_success?'да':'нет')+' · класс восстановлен после успешной атаки: '+(r.adaptive?'не применимо':r.restored?'да':'нет')+' · время: '+r.seconds.toFixed(2)+' с'),text('p','PSNR: '+r.attacked_quality.psnr_db.toFixed(2)+' → '+r.purified_quality.psnr_db.toFixed(2)+' дБ · фактический L∞: '+r.linf.toFixed(5)));
+ clearInterval(animation);$('cards').replaceChildren();const images=[];for(const [key,label]of [['clean','Исходное'],['attacked','Атака'],['purified','Очистка']]){const card=document.createElement('div');card.className='card';const img=document.createElement('img');img.alt=label;img.src=r.previews[key][0];card.append(text('h3',label),img,text('p',r[key].class+' / '+(100*r[key].confidence).toFixed(1)+'%'));$('cards').append(card);images.push([img,r.previews[key]])}let frame=0;animation=setInterval(()=>{frame++;for(const[img,frames]of images)img.src=frames[frame%frames.length]},300);await refresh()
+}
+function action(id,fn){$(id).onclick=async()=>{$(id).disabled=true;$('message').textContent='';try{await fn()}catch(e){$('message').textContent=e.message}finally{$(id).disabled=false}}}
+action('collect',async()=>{const r=await api('collect',{});$('message').textContent='Добавлено видео: '+r.added;await refresh()});action('trainClassifier',()=>training('classifier'));action('trainPurifier',()=>training('purifier'));action('run',experiment);action('refresh',refresh);
+refresh().catch(e=>$('message').textContent=e.message);setInterval(()=>refresh().catch(()=>{}),5000);
+</script>
+</html>
